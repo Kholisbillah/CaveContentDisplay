@@ -1,0 +1,16 @@
+{
+  "Name": "CaveContentDisplay",
+  "Author": "Kholisbillah",
+  "Version": "1.0.0",
+  "Description": "Menampilkan daftar isi konten lantai cave/mine saat ini di HUD sebelah kiri layar.",
+  "UniqueID": "Kholisbillah.CaveContentDisplay",
+  "EntryDll": "CaveContentDisplay.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": [],
+  "Dependencies": [
+    {
+      "UniqueID": "spacechase0.GenericModConfigMenu",
+      "IsRequired": false
+    }
+  ]
+}

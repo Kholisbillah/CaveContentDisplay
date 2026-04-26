@@ -1,0 +1,48 @@
+{
+    // ── Resource Clumps ───────────────────────────────────────────────────────
+    "clump.600": "Stump",
+    "clump.602": "Hollow Log",
+    "clump.622": "Meteorite",
+    "clump.672": "Boulder",
+    "clump.752": "Mine Rock (Large)",
+    "clump.754": "Mine Rock (Large)",
+    "clump.756": "Mine Rock (Large)",
+    "clump.758": "Mine Rock (Large)",
+    "clump.unknown": "Resource Clump",
+
+    // ── HUD Categories ────────────────────────────────────────────────────────
+    "category.Container": "Container",
+    "category.Monster": "Monster",
+    "category.Item": "Item",
+    "category.Clump": "Clump",
+
+    // ── HUD Fallback Names ────────────────────────────────────────────────────
+    "name.UnknownObject": "Unknown Object",
+    "name.UnknownMonster": "Unknown Monster",
+
+    // ── GMCM: General ─────────────────────────────────────────────────────────
+    "config.showIcons.name": "Show Item Icons",
+    "config.showIcons.desc": "Show or hide the item icon next to each HUD entry.",
+
+    "config.refreshMode.name": "Refresh Mode",
+    "config.refreshMode.desc": "How often the HUD re-scans the current floor. RealTime = every tick; others = every N seconds.",
+
+    "config.sortMode.name": "Sort Mode",
+    "config.sortMode.desc": "Order in which items are listed in the HUD.",
+
+    "config.hudX.name": "HUD X Position",
+    "config.hudX.desc": "Horizontal position of the HUD panel in pixels from the left edge.",
+
+    "config.hudY.name": "HUD Y Position",
+    "config.hudY.desc": "Vertical position of the HUD panel in pixels from the top edge.",
+
+    "config.guiScale.name": "GUI Scale",
+    "config.guiScale.desc": "Scale multiplier for the HUD display. 1.0 = default size.",
+
+    // ── GMCM: Keys ────────────────────────────────────────────────────────────
+    "config.filterMenuKey.name": "Open Filter Picker Key",
+    "config.filterMenuKey.desc": "Press this key in-game to open the Item Filter Picker. Default: R",
+
+    "config.toggleKey.name": "Toggle HUD Key",
+    "config.toggleKey.desc": "Press this key to show or hide the Cave Contents HUD. Default: H"
+}
