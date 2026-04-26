@@ -13,7 +13,7 @@
 
 ---
 
-![Cave Contents HUD Banner]([url=https://ibb.co/FktRPkYJ][img]https://i.ibb.co/FktRPkYJ/CAVE-CONTENT-HUD.jpg[/img][/url])
+![Cave Contents HUD Banner](https://i.ibb.co/nqSxWq1f/CAVE-CONTENT-HUD.jpg)
 
 </div>
 
