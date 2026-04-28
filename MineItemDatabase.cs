@@ -71,7 +71,8 @@ namespace CaveContentDisplay
                 new() { Name = "Radioactive Stone", Category = MineCategory.Ores, QualifiedItemId = "(O)95"  },
                 new() { Name = "Diamond Stone",     Category = MineCategory.Ores, QualifiedItemId = "(O)2"   },
                 new() { Name = "Mystic Stone",      Category = MineCategory.Ores, QualifiedItemId = "(O)46"  },
-                new() { Name = "Fossil Stone",      Category = MineCategory.Ores, QualifiedItemId = "(O)816" },
+                new() { Name = "Fossil Stone",        Category = MineCategory.Ores, QualifiedItemId = "(O)816" },
+                new() { Name = "Cinder Shard Stone",  Category = MineCategory.Ores, QualifiedItemId = "(O)843" },
 
                 // Gem/Mineral Nodes (ore rocks that drop gems/geode minerals)
                 new() { Name = "Copper Node",       Category = MineCategory.Ores, QualifiedItemId = "(O)751" },

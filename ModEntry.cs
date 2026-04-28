@@ -230,6 +230,7 @@ namespace CaveContentDisplay
         {
             "Copper Stone", "Iron Stone", "Gold Stone", "Iridium Stone",
             "Radioactive Stone", "Diamond Stone", "Fossil Stone", "Mystic Stone",
+            "Cinder Shard Stone",
         };
 
         /// <summary>
@@ -288,6 +289,28 @@ namespace CaveContentDisplay
             // ── Pass 1: Regular Objects ────────────────────────────────────────
             foreach (SObject obj in location.objects.Values)
             {
+                // ── Ladder / Shaft: detect by parentSheetIndex (PSI) ──────────
+                // Their DisplayName may not match our canonical names, so we
+                // intercept them here before the generic name-lookup path.
+                int psi = obj.ParentSheetIndex;
+                if (psi == 173 || psi == 174)
+                {
+                    string fixedName = psi == 173 ? "Ladder" : "Shaft";
+                    if (IsMatch(fixedName))
+                    {
+                        Texture2D? ladderTex  = null;
+                        Rectangle? ladderRect = null;
+                        try
+                        {
+                            ladderTex  = Game1.objectSpriteSheet;
+                            ladderRect = Game1.getSourceRectForStandardTileSheet(ladderTex, psi, 16, 16);
+                        }
+                        catch { }
+                        AddOrIncrement(result, fixedName, null, MineCategory.Objects, ladderTex, ladderRect);
+                    }
+                    continue; // skip generic processing for these two
+                }
+
                 string name = NormalizeItemName(GetObjectDisplayName(obj));
                 if (!IsMatch(name)) continue;
 
