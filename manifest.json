@@ -1,7 +1,7 @@
 {
   "Name": "CaveContentDisplay",
   "Author": "Kholisbillah",
-  "Version": "1.0.0",
+  "Version": "1.1.1",
   "Description": "Menampilkan daftar isi konten lantai cave/mine saat ini di HUD sebelah kiri layar.",
   "UniqueID": "Kholisbillah.CaveContentDisplay",
   "EntryDll": "CaveContentDisplay.dll",

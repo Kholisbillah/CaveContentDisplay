@@ -63,6 +63,16 @@ namespace CaveContentDisplay
                 new() { Name = "Fire Quartz",       Category = MineCategory.Ores, QualifiedItemId = "(O)82"  },
                 new() { Name = "Refined Quartz",    Category = MineCategory.Ores, QualifiedItemId = "(O)338" },
 
+                // Ore stones — single-tile rocks that yield ore when mined
+                new() { Name = "Copper Stone",      Category = MineCategory.Ores, QualifiedItemId = "(O)751" },
+                new() { Name = "Iron Stone",        Category = MineCategory.Ores, QualifiedItemId = "(O)290" },
+                new() { Name = "Gold Stone",        Category = MineCategory.Ores, QualifiedItemId = "(O)764" },
+                new() { Name = "Iridium Stone",     Category = MineCategory.Ores, QualifiedItemId = "(O)765" },
+                new() { Name = "Radioactive Stone", Category = MineCategory.Ores, QualifiedItemId = "(O)95"  },
+                new() { Name = "Diamond Stone",     Category = MineCategory.Ores, QualifiedItemId = "(O)2"   },
+                new() { Name = "Mystic Stone",      Category = MineCategory.Ores, QualifiedItemId = "(O)46"  },
+                new() { Name = "Fossil Stone",      Category = MineCategory.Ores, QualifiedItemId = "(O)816" },
+
                 // Gem/Mineral Nodes (ore rocks that drop gems/geode minerals)
                 new() { Name = "Copper Node",       Category = MineCategory.Ores, QualifiedItemId = "(O)751" },
                 new() { Name = "Iron Node",         Category = MineCategory.Ores, QualifiedItemId = "(O)290" },

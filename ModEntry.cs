@@ -225,16 +225,24 @@ namespace CaveContentDisplay
         private static bool IsInMine()
             => CaveDetector.IsCaveLocation(Game1.currentLocation);
 
+        // Ore stones that have distinct drops — must NOT be normalized to "Stone"
+        private static readonly HashSet<string> _oreStoneNames = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "Copper Stone", "Iron Stone", "Gold Stone", "Iridium Stone",
+            "Radioactive Stone", "Diamond Stone", "Fossil Stone", "Mystic Stone",
+        };
+
         /// <summary>
-        /// Normalizes stone variant display names to a single canonical "Stone".
-        /// Any name containing "Stone" but NOT "Node" or "Ore" is treated as plain stone
-        /// (Snowy Stone, Lava Stone, Copper Stone visual variants, etc.).
+        /// Normalizes cosmetic stone variant names (Snowy Stone, Lava Stone, etc.)
+        /// to the canonical "Stone". Ore stones with distinct drops are preserved as-is.
+        /// Rule: name contains "Stone", NOT "Node", and NOT in the ore-stone blacklist.
         /// </summary>
         private static string NormalizeItemName(string name)
         {
+            if (_oreStoneNames.Contains(name)) return name; // ore stone — keep identity
             if (name.Contains("Stone", StringComparison.OrdinalIgnoreCase) &&
                 !name.Contains("Node",  StringComparison.OrdinalIgnoreCase))
-                return "Stone";
+                return "Stone"; // cosmetic variant — merge into "Stone"
             return name;
         }
 
