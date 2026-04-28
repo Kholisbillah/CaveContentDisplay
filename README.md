@@ -13,7 +13,7 @@
 
 ---
 
-![Cave Contents HUD Banner](https://kommodo.ai/i/4W8AW8d7WpiysljRj1N3)
+![Cave Contents HUD Banner](https://i.ibb.co/nqSxWq1f/CAVE-CONTENT-HUD.jpg)
 
 </div>
 
