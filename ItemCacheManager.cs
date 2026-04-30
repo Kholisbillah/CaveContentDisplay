@@ -10,29 +10,39 @@ namespace CaveContentDisplay
     /// </summary>
     public class CachedItemEntry
     {
-        public string Name           { get; set; } = "";
-        public string Category       { get; set; } = "";
+        /// <summary>Stable canonical key (e.g. "Item:Stone", "Monster:Green Slime").</summary>
+        public string CanonicalKey    { get; set; } = "";
+        /// <summary>English display name (for readability in JSON and legacy fallback).</summary>
+        public string Name            { get; set; } = "";
+        public string Category        { get; set; } = "";
         public string? QualifiedItemId { get; set; }
-        public bool IsResourceClump  { get; set; }
-        public int TimesFound        { get; set; }
-        public string LastSeen       { get; set; } = "";
-        /// <summary>True if this item is NOT in the MineItemDatabase master list (i.e. from a mod).</summary>
-        public bool IsModded         { get; set; }
+        public bool IsResourceClump   { get; set; }
+        public int TimesFound         { get; set; }
+        public string LastSeen        { get; set; } = "";
+        /// <summary>True if this item is NOT in the MineItemDatabase master list.</summary>
+        public bool IsModded          { get; set; }
     }
 
     /// <summary>
     /// Manages loading, updating, and saving the persistent item scan cache.
-    /// Uses SMAPI's IModHelper.Data.WriteJsonFile / ReadJsonFile for serialization.
     /// Cache path: "data/scanned-items.json" (relative to mod folder).
+    /// Keyed by CanonicalKey (language-independent).
     /// </summary>
     public class ItemCacheManager
     {
-        private const string CachePath = "data/scanned-items.json";
+        /// <summary>
+        /// Returns the per-save cache path. Falls back to a shared path if no save is loaded.
+        /// This prevents split-screen/multiplayer from corrupting a shared file (Issue 2.4).
+        /// </summary>
+        private static string CachePath =>
+            string.IsNullOrEmpty(Constants.SaveFolderName)
+                ? "data/scanned-items.json"
+                : $"data/{Constants.SaveFolderName}/scanned-items.json";
 
         private readonly IModHelper _helper;
         private readonly IMonitor _monitor;
 
-        /// <summary>In-memory cache keyed by item name (case-insensitive).</summary>
+        /// <summary>In-memory cache keyed by canonical key (case-insensitive).</summary>
         public Dictionary<string, CachedItemEntry> Cache { get; private set; }
             = new(StringComparer.OrdinalIgnoreCase);
 
@@ -45,8 +55,7 @@ namespace CaveContentDisplay
         // ── Load ──────────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Loads the cache from disk. Gracefully falls back to an empty cache
-        /// if the file is missing or corrupt.
+        /// Loads the cache from disk. Migrates old name-based keys to canonical keys.
         /// </summary>
         public void LoadCache()
         {
@@ -55,7 +64,36 @@ namespace CaveContentDisplay
                 var data = _helper.Data.ReadJsonFile<Dictionary<string, CachedItemEntry>>(CachePath);
                 if (data != null)
                 {
-                    Cache = new Dictionary<string, CachedItemEntry>(data, StringComparer.OrdinalIgnoreCase);
+                    var migrated = new Dictionary<string, CachedItemEntry>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var kvp in data)
+                    {
+                        string key = kvp.Key;
+                        var entry = kvp.Value;
+
+                        // Migration: if key looks like an old English name (no colon prefix),
+                        // convert it to a canonical key using the master database.
+                        if (!key.Contains(':'))
+                        {
+                            if (MineItemDatabase.EnglishNameToKey.TryGetValue(key, out var canonical))
+                            {
+                                key = canonical;
+                                entry.CanonicalKey = canonical;
+                                _monitor.Log($"[Cache] Migrated key '{kvp.Key}' → '{canonical}'", LogLevel.Debug);
+                            }
+                            else
+                            {
+                                // Unknown old name — treat as modded, keep as "Item:{name}"
+                                key = CanonicalPrefix.Build(CanonicalPrefix.Item, key);
+                                entry.CanonicalKey = key;
+                            }
+                        }
+
+                        if (string.IsNullOrEmpty(entry.CanonicalKey))
+                            entry.CanonicalKey = key;
+
+                        migrated.TryAdd(key, entry);
+                    }
+                    Cache = migrated;
                     _monitor.Log($"[Cache] Loaded {Cache.Count} cached item(s).", LogLevel.Debug);
                 }
                 else
@@ -75,43 +113,42 @@ namespace CaveContentDisplay
 
         /// <summary>
         /// Merges a floor scan result into the cache.
-        /// Increments TimesFound for each item and updates LastSeen timestamp.
+        /// Items are keyed by CanonicalKey.
         /// </summary>
         public void MergeFloorScan(IEnumerable<ScannedItem> scannedItems)
         {
-            var masterNames = new System.Collections.Generic.HashSet<string>(
-                MineItemDatabase.AllItems.Select(x => x.Name),
-                StringComparer.OrdinalIgnoreCase);
-
             string now = DateTime.UtcNow.ToString("o");
 
             foreach (var item in scannedItems)
             {
-                if (string.IsNullOrWhiteSpace(item.DisplayName)) continue;
+                if (string.IsNullOrWhiteSpace(item.CanonicalKey)) continue;
 
-                if (!Cache.TryGetValue(item.DisplayName, out var entry))
+                if (!Cache.TryGetValue(item.CanonicalKey, out var entry))
                 {
+                    // Extract internal English name from canonical key (e.g. "Item:Stone" → "Stone")
+                    string internalName = item.CanonicalKey;
+                    int colonIdx = internalName.IndexOf(':');
+                    if (colonIdx >= 0) internalName = internalName.Substring(colonIdx + 1);
+
                     entry = new CachedItemEntry
                     {
-                        Name            = item.DisplayName,
+                        CanonicalKey    = item.CanonicalKey,
+                        Name            = internalName,
                         Category        = item.Category,
                         QualifiedItemId = item.QualifiedItemId,
-                        IsModded        = !masterNames.Contains(item.DisplayName),
+                        IsModded        = !MineItemDatabase.ByCanonicalKey.ContainsKey(item.CanonicalKey),
                     };
-                    Cache[item.DisplayName] = entry;
+                    Cache[item.CanonicalKey] = entry;
                 }
                 entry.TimesFound += item.Count;
                 entry.LastSeen    = now;
-                // Update modded flag in case master list changed
-                entry.IsModded = !masterNames.Contains(item.DisplayName);
+                entry.IsModded    = !MineItemDatabase.ByCanonicalKey.ContainsKey(item.CanonicalKey);
             }
         }
 
         // ── Save ──────────────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Saves the current cache to disk.
-        /// </summary>
+        /// <summary>Saves the current cache to disk.</summary>
         public void SaveCache()
         {
             try

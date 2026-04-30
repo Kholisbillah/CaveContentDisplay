@@ -13,16 +13,20 @@ using StardewValley.Menus;
 using StardewValley.Monsters;
 using StardewValley.Objects;
 using StardewValley.TerrainFeatures;
+using xTile.Layers;
 using SObject = StardewValley.Object;
 
 namespace CaveContentDisplay
 {
     public class ScannedItem
     {
-        public string DisplayName      { get; set; } = "";
-        public string? QualifiedItemId { get; set; }
-        public int Count               { get; set; }
-        public string Category         { get; set; } = "";
+        /// <summary>Stable, language-independent key (e.g. "Item:Stone", "Monster:Green Slime").</summary>
+        public string CanonicalKey       { get; set; } = "";
+        /// <summary>Localized display name for HUD rendering.</summary>
+        public string DisplayName        { get; set; } = "";
+        public string? QualifiedItemId   { get; set; }
+        public int Count                 { get; set; }
+        public string Category           { get; set; } = "";
         public Texture2D? CustomTexture       { get; set; }
         public Rectangle? CustomSourceRect    { get; set; }
     }
@@ -37,12 +41,19 @@ namespace CaveContentDisplay
         private ModConfig Config = null!;
         private ItemCacheManager _cacheManager = null!;
 
-        /// <summary>Current floor scan result: name → item info.</summary>
+        /// <summary>Current floor scan result (unfiltered): canonicalKey → item info.</summary>
         private Dictionary<string, ScannedItem> _floorContents = new();
+
+        /// <summary>Filtered view of _floorContents for HUD display.</summary>
+        private Dictionary<string, ScannedItem> _filteredContents = new();
 
         private bool _hudVisible = true;
         private bool _isDirty    = true;
         private int  _tickCounter = 0;
+        /// <summary>True when heavy per-tick events are subscribed (only in caves).</summary>
+        private bool _caveEventsActive = false;
+        /// <summary>Cached tile-based items (ladders/shafts) — only rescanned on warp (Issue 3.1).</summary>
+        private Dictionary<string, ScannedItem>? _cachedTileItems;
 
         // ── SMAPI Entry ────────────────────────────────────────────────────────
         public override void Entry(IModHelper helper)
@@ -52,15 +63,48 @@ namespace CaveContentDisplay
             _cacheManager = new ItemCacheManager(helper, Monitor);
             _cacheManager.LoadCache();
 
+            // ── Migrate old English-name-based FilteredItems to canonical keys ──
+            MigrateFilteredItems();
+
             helper.Events.GameLoop.GameLaunched   += OnGameLaunched;
-            helper.Events.GameLoop.UpdateTicked   += OnUpdateTicked;
-            helper.Events.Display.RenderedHud     += OnRenderedHud;
             helper.Events.Input.ButtonPressed     += OnButtonPressed;
             helper.Events.Player.Warped           += OnWarped;
-            helper.Events.World.ObjectListChanged += OnObjectListChanged;
-            helper.Events.World.NpcListChanged    += OnNpcListChanged;
+            helper.Events.GameLoop.SaveLoaded     += OnSaveLoaded;
+            helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
+            // Note: UpdateTicked, RenderedHud, ObjectListChanged, NpcListChanged
+            // are subscribed/unsubscribed dynamically via SubscribeCaveEvents/UnsubscribeCaveEvents
+            // to avoid per-tick overhead when the player is not in a cave (Issue 5.1).
 
-            Monitor.Log("CaveContentDisplay dimuat!", LogLevel.Info);
+            Monitor.Log("CaveContentDisplay loaded!", LogLevel.Info);
+        }
+
+        /// <summary>
+        /// One-time migration: converts old English display-name entries in FilteredItems
+        /// to canonical keys (e.g. "Stone" → "Item:Stone").
+        /// </summary>
+        private void MigrateFilteredItems()
+        {
+            bool changed = false;
+            for (int i = 0; i < Config.FilteredItems.Count; i++)
+            {
+                string entry = Config.FilteredItems[i];
+                if (entry.Contains(':')) continue; // already a canonical key
+
+                if (MineItemDatabase.EnglishNameToKey.TryGetValue(entry, out var canonical))
+                {
+                    Config.FilteredItems[i] = canonical;
+                    Monitor.Log($"[Migration] Filter '{entry}' → '{canonical}'", LogLevel.Debug);
+                    changed = true;
+                }
+                else
+                {
+                    // Unknown name — wrap as Item:{name}
+                    Config.FilteredItems[i] = CanonicalPrefix.Build(CanonicalPrefix.Item, entry);
+                    changed = true;
+                }
+            }
+            if (changed)
+                Helper.WriteConfig(Config);
         }
 
         // ── GMCM ──────────────────────────────────────────────────────────────
@@ -71,18 +115,20 @@ namespace CaveContentDisplay
 
             configMenu.Register(
                 mod: ModManifest,
-                reset: () => Config = new ModConfig(),
+                reset: () => { Config = new ModConfig(); MigrateFilteredItems(); },
                 save: () => Helper.WriteConfig(Config));
 
             configMenu.AddBoolOption(
                 mod: ModManifest,
                 name: () => Helper.Translation.Get("config.showIcons.name").ToString(),
+                tooltip: () => Helper.Translation.Get("config.showIcons.desc").ToString(),
                 getValue: () => Config.ShowIcons,
                 setValue: value => Config.ShowIcons = value);
 
             configMenu.AddTextOption(
                 mod: ModManifest,
                 name: () => Helper.Translation.Get("config.refreshMode.name").ToString(),
+                tooltip: () => Helper.Translation.Get("config.refreshMode.desc").ToString(),
                 getValue: () => Config.RefreshMode.ToString(),
                 setValue: value => Config.RefreshMode = Enum.Parse<RefreshMode>(value),
                 allowedValues: Enum.GetNames(typeof(RefreshMode)));
@@ -90,25 +136,37 @@ namespace CaveContentDisplay
             configMenu.AddTextOption(
                 mod: ModManifest,
                 name: () => Helper.Translation.Get("config.sortMode.name").ToString(),
+                tooltip: () => Helper.Translation.Get("config.sortMode.desc").ToString(),
                 getValue: () => Config.SortMode.ToString(),
                 setValue: value => Config.SortMode = Enum.Parse<SortMode>(value),
                 allowedValues: Enum.GetNames(typeof(SortMode)));
 
+            configMenu.AddTextOption(
+                mod: ModManifest,
+                name: () => Helper.Translation.Get("config.filterMode.name").ToString(),
+                tooltip: () => Helper.Translation.Get("config.filterMode.desc").ToString(),
+                getValue: () => Config.FilterMode.ToString(),
+                setValue: value => Config.FilterMode = Enum.Parse<FilterMode>(value),
+                allowedValues: Enum.GetNames(typeof(FilterMode)));
+
             configMenu.AddNumberOption(
                 mod: ModManifest,
                 name: () => Helper.Translation.Get("config.hudX.name").ToString(),
+                tooltip: () => Helper.Translation.Get("config.hudX.desc").ToString(),
                 getValue: () => Config.HudX,
                 setValue: value => Config.HudX = value);
 
             configMenu.AddNumberOption(
                 mod: ModManifest,
                 name: () => Helper.Translation.Get("config.hudY.name").ToString(),
+                tooltip: () => Helper.Translation.Get("config.hudY.desc").ToString(),
                 getValue: () => Config.HudY,
                 setValue: value => Config.HudY = value);
 
             configMenu.AddNumberOption(
                 mod: ModManifest,
                 name: () => Helper.Translation.Get("config.guiScale.name").ToString(),
+                tooltip: () => Helper.Translation.Get("config.guiScale.desc").ToString(),
                 getValue: () => Config.GuiScale,
                 setValue: value => Config.GuiScale = value,
                 min: 0.5f, max: 2.0f, interval: 0.1f);
@@ -119,9 +177,10 @@ namespace CaveContentDisplay
                 text: () =>
                 {
                     int c = Config.FilteredItems.Count;
+                    string mode = Config.FilterMode == FilterMode.Whitelist ? "Whitelist" : "Blacklist";
                     return c == 0
-                        ? "Active Filters: (All items shown)"
-                        : $"Active Filters: {c} item(s) selected — press [{Config.FilterMenuKey}] to change";
+                        ? $"Active Filters ({mode}): (All items shown)"
+                        : $"Active Filters ({mode}): {c} item(s) — press [{Config.FilterMenuKey}] to change";
                 });
 
             configMenu.AddKeybind(
@@ -143,12 +202,14 @@ namespace CaveContentDisplay
 
         private void OnObjectListChanged(object? sender, ObjectListChangedEventArgs e)
         {
-            if (e.Location == Game1.currentLocation) _isDirty = true;
+            if (Game1.currentLocation != null && e.Location == Game1.currentLocation)
+                _isDirty = true;
         }
 
         private void OnNpcListChanged(object? sender, NpcListChangedEventArgs e)
         {
-            if (e.Location == Game1.currentLocation) _isDirty = true;
+            if (Game1.currentLocation != null && e.Location == Game1.currentLocation)
+                _isDirty = true;
         }
 
         private void OnWarped(object? sender, WarpedEventArgs e)
@@ -161,12 +222,65 @@ namespace CaveContentDisplay
             }
 
             _floorContents.Clear();
+            _filteredContents.Clear();
+            _cachedTileItems = null;  // Invalidate tile cache for new floor (Issue 3.1)
 
             if (CaveDetector.IsCaveLocation(e.NewLocation))
             {
                 _isDirty      = true;
                 _tickCounter  = GetIntervalTicks(); // force immediate update
+                SubscribeCaveEvents();
             }
+            else
+            {
+                UnsubscribeCaveEvents();
+            }
+        }
+
+        // ── Lifecycle ──────────────────────────────────────────────────────────
+
+        /// <summary>Reload per-save cache when a save is loaded (Issue 5.4).</summary>
+        private void OnSaveLoaded(object? sender, SaveLoadedEventArgs e)
+        {
+            _floorContents.Clear();
+            _filteredContents.Clear();
+            _cachedTileItems = null;
+            _hudVisible = true;
+            _isDirty = true;
+            _cacheManager.LoadCache();
+        }
+
+        /// <summary>Clear stale state when returning to title screen (Issue 5.4).</summary>
+        private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
+        {
+            _floorContents.Clear();
+            _filteredContents.Clear();
+            _cachedTileItems = null;
+            _hudVisible = true;
+            _isDirty = true;
+            UnsubscribeCaveEvents();
+        }
+
+        // ── Dynamic Event Subscription (Issue 5.1) ─────────────────────────────
+
+        private void SubscribeCaveEvents()
+        {
+            if (_caveEventsActive) return;
+            _caveEventsActive = true;
+            Helper.Events.GameLoop.UpdateTicked   += OnUpdateTicked;
+            Helper.Events.Display.RenderedHud     += OnRenderedHud;
+            Helper.Events.World.ObjectListChanged += OnObjectListChanged;
+            Helper.Events.World.NpcListChanged    += OnNpcListChanged;
+        }
+
+        private void UnsubscribeCaveEvents()
+        {
+            if (!_caveEventsActive) return;
+            _caveEventsActive = false;
+            Helper.Events.GameLoop.UpdateTicked   -= OnUpdateTicked;
+            Helper.Events.Display.RenderedHud     -= OnRenderedHud;
+            Helper.Events.World.ObjectListChanged -= OnObjectListChanged;
+            Helper.Events.World.NpcListChanged    -= OnNpcListChanged;
         }
 
         private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
@@ -174,23 +288,23 @@ namespace CaveContentDisplay
             if (!Context.IsWorldReady || !IsInMine()) return;
 
             _tickCounter++;
-            if (_tickCounter >= GetIntervalTicks())
+            if (_tickCounter >= GetIntervalTicks() || _isDirty)
             {
                 _tickCounter = 0;
-                if (_isDirty)
-                {
-                    _floorContents = ScanCurrentFloor();
-                    // Merge this scan into the persistent cache (in-memory only; saved on warp)
-                    _cacheManager.MergeFloorScan(_floorContents.Values);
-                    _isDirty = false;
-                }
+                _floorContents = ScanCurrentFloor();
+                // Merge full (unfiltered) scan into cache so no items are lost
+                _cacheManager.MergeFloorScan(_floorContents.Values);
+                // Apply filter for HUD display only
+                _filteredContents = ApplyFilter(_floorContents);
+                _isDirty = false;
             }
         }
 
         private void OnRenderedHud(object? sender, RenderedHudEventArgs e)
         {
-            if (!Context.IsWorldReady || !IsInMine()) return;
-            _hud.Draw(e.SpriteBatch, _floorContents, _hudVisible, Config);
+            // Check visibility first to skip unnecessary work (Issue 5.2)
+            if (!_hudVisible || !Context.IsWorldReady) return;
+            _hud.Draw(e.SpriteBatch, _filteredContents, _hudVisible, Config);
         }
 
         private void OnButtonPressed(object? sender, ButtonPressedEventArgs e)
@@ -213,6 +327,7 @@ namespace CaveContentDisplay
             if (e.Button == Config.ToggleKey)
             {
                 _hudVisible = !_hudVisible;
+                Game1.playSound("drumkit6");
             }
             else if (e.Button == Config.FilterMenuKey && Game1.activeClickableMenu == null)
             {
@@ -225,25 +340,34 @@ namespace CaveContentDisplay
         private static bool IsInMine()
             => CaveDetector.IsCaveLocation(Game1.currentLocation);
 
-        // Ore stones that have distinct drops — must NOT be normalized to "Stone"
-        private static readonly HashSet<string> _oreStoneNames = new(StringComparer.OrdinalIgnoreCase)
+        // Ore stones that have distinct drops — must NOT be normalized to "Stone".
+        // Derived from MineItemDatabase to stay in sync automatically (Issue 4.5).
+        private static readonly HashSet<string> _oreStoneNames = new(
+            MineItemDatabase.AllItems
+                .Where(x => x.Category == MineCategory.Ores && x.Name.EndsWith(" Stone", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.Name),
+            StringComparer.OrdinalIgnoreCase
+        );
+
+        /// <summary>
+        /// Cosmetic stone variant internal names (obj.Name) that all drop Stone (390).
+        /// Uses exact matching to avoid false positives on items like
+        /// "Soapstone", "Lemon Stone", or "Limestone" which are distinct items.
+        /// </summary>
+        private static readonly HashSet<string> _cosmeticStoneVariants = new(StringComparer.OrdinalIgnoreCase)
         {
-            "Copper Stone", "Iron Stone", "Gold Stone", "Iridium Stone",
-            "Radioactive Stone", "Diamond Stone", "Fossil Stone", "Mystic Stone",
-            "Cinder Shard Stone",
+            "Stone",
         };
 
         /// <summary>
-        /// Normalizes cosmetic stone variant names (Snowy Stone, Lava Stone, etc.)
-        /// to the canonical "Stone". Ore stones with distinct drops are preserved as-is.
-        /// Rule: name contains "Stone", NOT "Node", and NOT in the ore-stone blacklist.
+        /// Normalizes cosmetic stone variant names to the canonical "Stone".
+        /// Ore stones with distinct drops are preserved as-is.
+        /// Operates on internal English names (obj.Name), not localized DisplayName.
         /// </summary>
         private static string NormalizeItemName(string name)
         {
-            if (_oreStoneNames.Contains(name)) return name; // ore stone — keep identity
-            if (name.Contains("Stone", StringComparison.OrdinalIgnoreCase) &&
-                !name.Contains("Node",  StringComparison.OrdinalIgnoreCase))
-                return "Stone"; // cosmetic variant — merge into "Stone"
+            if (_oreStoneNames.Contains(name)) return name;
+            if (_cosmeticStoneVariants.Contains(name)) return "Stone";
             return name;
         }
 
@@ -274,10 +398,11 @@ namespace CaveContentDisplay
         // ── Scan Logic ─────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Scans the current mine floor in 3 passes:
+        /// Scans the current mine floor in 4 passes:
         /// 1. Regular objects (SObject)
         /// 2. ResourceClumps (2x2 objects)
         /// 3. Monsters (NPC subclass)
+        /// 4. Ladders &amp; Shafts (map tiles on Buildings layer)
         /// </summary>
         private Dictionary<string, ScannedItem> ScanCurrentFloor()
         {
@@ -289,30 +414,21 @@ namespace CaveContentDisplay
             // ── Pass 1: Regular Objects ────────────────────────────────────────
             foreach (SObject obj in location.objects.Values)
             {
-                // ── Ladder / Shaft: detect by parentSheetIndex (PSI) ──────────
-                // Their DisplayName may not match our canonical names, so we
-                // intercept them here before the generic name-lookup path.
-                int psi = obj.ParentSheetIndex;
-                if (psi == 173 || psi == 174)
-                {
-                    string fixedName = psi == 173 ? "Ladder" : "Shaft";
-                    if (IsMatch(fixedName))
-                    {
-                        Texture2D? ladderTex  = null;
-                        Rectangle? ladderRect = null;
-                        try
-                        {
-                            ladderTex  = Game1.objectSpriteSheet;
-                            ladderRect = Game1.getSourceRectForStandardTileSheet(ladderTex, psi, 16, 16);
-                        }
-                        catch { }
-                        AddOrIncrement(result, fixedName, null, MineCategory.Objects, ladderTex, ladderRect);
-                    }
-                    continue; // skip generic processing for these two
-                }
+                // Use internal English name (obj.Name) for stable, language-independent key building
+                string internalName = obj.Name ?? "UnknownObject";
+                string normalizedName = NormalizeItemName(internalName);
 
-                string name = NormalizeItemName(GetObjectDisplayName(obj));
-                if (!IsMatch(name)) continue;
+                // Build canonical key from internal English name
+                string canonicalKey;
+                if (MineItemDatabase.EnglishNameToKey.TryGetValue(normalizedName, out var knownKey))
+                    canonicalKey = knownKey;
+                else
+                    canonicalKey = CanonicalPrefix.Build(CanonicalPrefix.Item, normalizedName);
+
+
+
+                // Resolve localized display name for HUD
+                string displayName = MineItemDatabase.GetLocalizedDisplayName(canonicalKey);
 
                 string? qid = obj.QualifiedItemId;
                 string cat  = GetObjectCategory(obj);
@@ -344,10 +460,10 @@ namespace CaveContentDisplay
                 }
                 catch (Exception ex)
                 {
-                    Monitor.Log($"Icon load failed for '{name}' ({qid}): {ex.Message}", LogLevel.Trace);
+                    Monitor.Log($"Icon load failed for '{displayName}' ({qid}): {ex.Message}", LogLevel.Trace);
                 }
 
-                AddOrIncrement(result, name, qid, cat, tex, rect);
+                AddOrIncrement(result, canonicalKey, displayName, qid, cat, tex, rect);
             }
 
             // ── Pass 2: ResourceClumps (2x2 objects) ──────────────────────────
@@ -355,22 +471,22 @@ namespace CaveContentDisplay
             {
                 int psi = clump.parentSheetIndex.Value;
                 string? name = MineItemDatabase.GetResourceClumpName(psi);
-                if (name == null) continue; // unknown clump type — skip
-                if (!IsMatch(name)) continue;
+                if (name == null) continue;
 
-                // Use best-effort static icon for resource clumps
+                string canonicalKey = CanonicalPrefix.Build(CanonicalPrefix.RC, psi.ToString());
+
+
                 Texture2D? tex  = null;
                 Rectangle? rect = null;
                 try
                 {
-                    // Map to a representative item icon
                     string iconQid = psi switch
                     {
-                        600 => "(O)390", // Stone
-                        622 => "(O)386", // Iridium Ore (Meteorite)
-                        752 => "(O)84",  // Frozen Tear (ice)
-                        754 => "(O)848", // Cinder Shard (lava)
-                        756 => "(O)386", // Iridium Ore
+                        600 => "(O)390",
+                        622 => "(O)74",   // Meteorite → Prismatic Shard (distinctive icon)
+                        752 => "(O)84",
+                        754 => "(O)848",
+                        756 => "(O)386",
                         _   => "(O)390"
                     };
                     var data = ItemRegistry.GetDataOrErrorItem(iconQid);
@@ -379,7 +495,7 @@ namespace CaveContentDisplay
                 }
                 catch { }
 
-                AddOrIncrement(result, name, null, MineCategory.Objects, tex, rect);
+                AddOrIncrement(result, canonicalKey, name, null, MineCategory.Objects, tex, rect);
             }
 
             // ── Pass 3: Monsters ──────────────────────────────────────────────
@@ -387,31 +503,118 @@ namespace CaveContentDisplay
             {
                 if (character is not Monster monster) continue;
 
-                string name = monster.displayName
+                // monster.Name is the internal English name; displayName is localized
+                string internalName = monster.Name ?? "UnknownMonster";
+                string canonicalKey = CanonicalPrefix.Build(CanonicalPrefix.Monster, internalName);
+
+
+                string displayName = monster.displayName
                     ?? monster.Name
                     ?? Helper.Translation.Get("name.UnknownMonster").ToString();
-                if (!IsMatch(name)) continue;
 
                 Texture2D? tex  = monster.Sprite?.Texture;
                 Rectangle? rect = monster.Sprite?.sourceRect;
-                AddOrIncrement(result, name, null, MineCategory.Monsters, tex, rect);
+                AddOrIncrement(result, canonicalKey, displayName, null, MineCategory.Monsters, tex, rect);
+            }
+
+            // ── Pass 4: Ladders & Shafts (cached per-floor, Issue 3.1) ───────
+            // Tile layout is static per floor — scan once, reuse until warp.
+            _cachedTileItems ??= ScanTileItems(location);
+            foreach (var kvp in _cachedTileItems)
+            {
+                var src = kvp.Value;
+                if (!result.ContainsKey(kvp.Key))
+                {
+                    result[kvp.Key] = new ScannedItem
+                    {
+                        CanonicalKey     = src.CanonicalKey,
+                        DisplayName      = src.DisplayName,
+                        QualifiedItemId  = src.QualifiedItemId,
+                        Count            = src.Count,
+                        Category         = src.Category,
+                        CustomTexture    = src.CustomTexture,
+                        CustomSourceRect = src.CustomSourceRect,
+                    };
+                }
             }
 
             return result;
         }
 
-        // ── Match / Category Helpers ───────────────────────────────────────────
-
-        private bool IsMatch(string itemName)
+        /// <summary>
+        /// One-time tile scan for ladders/shafts on the Buildings layer.
+        /// Result is cached in _cachedTileItems until the player warps (Issue 3.1).
+        /// </summary>
+        private Dictionary<string, ScannedItem> ScanTileItems(GameLocation location)
         {
-            if (Config.FilteredItems.Count == 0) return true;
-            return Config.FilteredItems.Contains(itemName, StringComparer.OrdinalIgnoreCase);
+            var tileResult = new Dictionary<string, ScannedItem>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                Layer? buildingsLayer = location.map?.GetLayer("Buildings");
+                if (buildingsLayer != null)
+                {
+                    for (int tx = 0; tx < buildingsLayer.LayerWidth; tx++)
+                    {
+                        for (int ty = 0; ty < buildingsLayer.LayerHeight; ty++)
+                        {
+                            var tile = buildingsLayer.Tiles[tx, ty];
+                            if (tile == null) continue;
+                            int tileIndex = tile.TileIndex;
+                            if (tileIndex != 173 && tileIndex != 174) continue;
+
+                            string name = tileIndex == 173 ? "Ladder" : "Shaft";
+                            string canonicalKey = CanonicalPrefix.Build(CanonicalPrefix.Special, name);
+
+                            Texture2D? tex  = null;
+                            Rectangle? rect = null;
+                            try
+                            {
+                                tex  = Game1.objectSpriteSheet;
+                                rect = Game1.getSourceRectForStandardTileSheet(tex, tileIndex, 16, 16);
+                            }
+                            catch { }
+
+                            AddOrIncrement(tileResult, canonicalKey, name, null, MineCategory.Objects, tex, rect);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Monitor.Log($"Ladder/Shaft scan failed: {ex.Message}", LogLevel.Trace);
+            }
+            return tileResult;
         }
 
-        private string GetObjectDisplayName(SObject obj)
+        // ── Match / Category Helpers ───────────────────────────────────────────
+
+        /// <summary>
+        /// Checks if an item with the given canonical key passes the current filter.
+        /// Supports both Whitelist and Blacklist modes.
+        /// </summary>
+        private bool IsMatch(string canonicalKey)
         {
-            return obj.DisplayName ?? obj.Name
-                ?? Helper.Translation.Get("name.UnknownObject").ToString();
+            if (Config.FilteredItems.Count == 0) return true;
+            bool isInList = Config.FilteredItems.Contains(canonicalKey, StringComparer.OrdinalIgnoreCase);
+            return Config.FilterMode == FilterMode.Whitelist ? isInList : !isInList;
+        }
+
+        /// <summary>
+        /// Creates a filtered copy of the full scan results for HUD display.
+        /// Only includes items that pass the current Whitelist/Blacklist filter.
+        /// </summary>
+        private Dictionary<string, ScannedItem> ApplyFilter(Dictionary<string, ScannedItem> fullScan)
+        {
+            if (Config.FilteredItems.Count == 0)
+                return fullScan; // no filter active — return reference directly
+
+            var filtered = new Dictionary<string, ScannedItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kvp in fullScan)
+            {
+                if (IsMatch(kvp.Key))
+                    filtered[kvp.Key] = kvp.Value;
+            }
+            return filtered;
         }
 
         private string GetObjectCategory(SObject obj)
@@ -423,25 +626,27 @@ namespace CaveContentDisplay
 
         private static void AddOrIncrement(
             Dictionary<string, ScannedItem> dict,
-            string name,
+            string canonicalKey,
+            string displayName,
             string? qid,
             string cat,
             Texture2D? customTex  = null,
             Rectangle? customRect = null)
         {
-            if (string.IsNullOrWhiteSpace(name)) return;
-            if (!dict.TryGetValue(name, out var item))
+            if (string.IsNullOrWhiteSpace(canonicalKey)) return;
+            if (!dict.TryGetValue(canonicalKey, out var item))
             {
                 item = new ScannedItem
                 {
-                    DisplayName      = name,
+                    CanonicalKey     = canonicalKey,
+                    DisplayName      = displayName,
                     QualifiedItemId  = qid,
                     Count            = 0,
                     Category         = cat,
                     CustomTexture    = customTex,
                     CustomSourceRect = customRect,
                 };
-                dict[name] = item;
+                dict[canonicalKey] = item;
             }
             item.Count++;
         }

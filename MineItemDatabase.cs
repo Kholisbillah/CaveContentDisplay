@@ -1,5 +1,8 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using StardewValley;
+using StardewValley.ItemTypeDefinitions;
 
 namespace CaveContentDisplay
 {
@@ -8,8 +11,11 @@ namespace CaveContentDisplay
     /// </summary>
     public class MineItemData
     {
+        /// <summary>English display name (used as fallback and for legacy config migration).</summary>
         public string Name { get; set; } = "";
         public string Category { get; set; } = "";
+        /// <summary>Stable, language-independent key for matching. E.g. "(O)378", "Monster:Green Slime", "RC:600", "Special:Ladder".</summary>
+        public string CanonicalKey { get; set; } = "";
         /// <summary>Qualified item ID for icon lookup, e.g. "(O)80". Null for monsters/clumps without item IDs.</summary>
         public string? QualifiedItemId { get; set; }
         /// <summary>True if this is a ResourceClump (2x2 object), which requires separate scan logic.</summary>
@@ -31,6 +37,21 @@ namespace CaveContentDisplay
     }
 
     /// <summary>
+    /// Canonical key prefix constants used throughout the codebase.
+    /// Central definitions prevent typo-induced mismatches (Issue 4.1).
+    /// </summary>
+    public static class CanonicalPrefix
+    {
+        public const string Item    = "Item";
+        public const string Monster = "Monster";
+        public const string RC      = "RC";
+        public const string Special = "Special";
+
+        /// <summary>Builds a canonical key string, e.g. "Item:Stone".</summary>
+        public static string Build(string prefix, string name) => $"{prefix}:{name}";
+    }
+
+    /// <summary>
     /// Static master list of all items, monsters, and resource clumps
     /// that can appear in The Mines, Skull Cavern, Quarry Mine, and Volcano Dungeon.
     /// ResourceClumps (2x2 objects) have IsResourceClump = true and are handled
@@ -40,6 +61,12 @@ namespace CaveContentDisplay
     {
         public static readonly IReadOnlyList<MineItemData> AllItems;
         public static readonly IReadOnlyDictionary<string, IReadOnlyList<MineItemData>> ByCategory;
+        /// <summary>Fast lookup by CanonicalKey (case-insensitive).</summary>
+        public static readonly IReadOnlyDictionary<string, MineItemData> ByCanonicalKey;
+        /// <summary>Reverse lookup: English Name → CanonicalKey (for migrating old configs).</summary>
+        public static readonly IReadOnlyDictionary<string, string> EnglishNameToKey;
+        /// <summary>Pre-built set of resource clump names for O(1) lookup (Issue 3.5).</summary>
+        private static readonly HashSet<string> _resourceClumpNames;
 
         static MineItemDatabase()
         {
@@ -63,7 +90,8 @@ namespace CaveContentDisplay
                 new() { Name = "Fire Quartz",       Category = MineCategory.Ores, QualifiedItemId = "(O)82"  },
                 new() { Name = "Refined Quartz",    Category = MineCategory.Ores, QualifiedItemId = "(O)338" },
 
-                // Ore stones — single-tile rocks that yield ore when mined
+                // Ore stones / Nodes — single-tile rocks that yield ore when mined
+                // (Merged "Stone" and "Node" variants; they are the same in-game objects)
                 new() { Name = "Copper Stone",      Category = MineCategory.Ores, QualifiedItemId = "(O)751" },
                 new() { Name = "Iron Stone",        Category = MineCategory.Ores, QualifiedItemId = "(O)290" },
                 new() { Name = "Gold Stone",        Category = MineCategory.Ores, QualifiedItemId = "(O)764" },
@@ -71,19 +99,11 @@ namespace CaveContentDisplay
                 new() { Name = "Radioactive Stone", Category = MineCategory.Ores, QualifiedItemId = "(O)95"  },
                 new() { Name = "Diamond Stone",     Category = MineCategory.Ores, QualifiedItemId = "(O)2"   },
                 new() { Name = "Mystic Stone",      Category = MineCategory.Ores, QualifiedItemId = "(O)46"  },
-                new() { Name = "Fossil Stone",        Category = MineCategory.Ores, QualifiedItemId = "(O)816" },
-                new() { Name = "Cinder Shard Stone",  Category = MineCategory.Ores, QualifiedItemId = "(O)843" },
-
-                // Gem/Mineral Nodes (ore rocks that drop gems/geode minerals)
-                new() { Name = "Copper Node",       Category = MineCategory.Ores, QualifiedItemId = "(O)751" },
-                new() { Name = "Iron Node",         Category = MineCategory.Ores, QualifiedItemId = "(O)290" },
-                new() { Name = "Gold Node",         Category = MineCategory.Ores, QualifiedItemId = "(O)764" },
-                new() { Name = "Iridium Node",      Category = MineCategory.Ores, QualifiedItemId = "(O)765" },
-                new() { Name = "Radioactive Node",  Category = MineCategory.Ores, QualifiedItemId = "(O)95"  },
+                new() { Name = "Fossil Stone",      Category = MineCategory.Ores, QualifiedItemId = "(O)816" },
+                new() { Name = "Cinder Shard Stone", Category = MineCategory.Ores, QualifiedItemId = "(O)843" },
                 new() { Name = "Coal Node",         Category = MineCategory.Ores, QualifiedItemId = "(O)343" },
                 new() { Name = "Amethyst Node",     Category = MineCategory.Ores, QualifiedItemId = "(O)8"   },
                 new() { Name = "Aquamarine Node",   Category = MineCategory.Ores, QualifiedItemId = "(O)14"  },
-                new() { Name = "Diamond Node",      Category = MineCategory.Ores, QualifiedItemId = "(O)2"   },
                 new() { Name = "Emerald Node",      Category = MineCategory.Ores, QualifiedItemId = "(O)10"  },
                 new() { Name = "Jade Node",         Category = MineCategory.Ores, QualifiedItemId = "(O)12"  },
                 new() { Name = "Ruby Node",         Category = MineCategory.Ores, QualifiedItemId = "(O)4"   },
@@ -116,38 +136,48 @@ namespace CaveContentDisplay
                 new() { Name = "Topaz",             Category = MineCategory.Gems, QualifiedItemId = "(O)68"  },
                 new() { Name = "Prismatic Shard",   Category = MineCategory.Gems, QualifiedItemId = "(O)74"  },
 
-                // Geode minerals
-                new() { Name = "Aerinite",          Category = MineCategory.Gems, QualifiedItemId = "(O)537" },
-                new() { Name = "Alamite",           Category = MineCategory.Gems, QualifiedItemId = "(O)553" },
-                new() { Name = "Baryte",            Category = MineCategory.Gems, QualifiedItemId = "(O)561" },
-                new() { Name = "Basalt",            Category = MineCategory.Gems, QualifiedItemId = "(O)557" },
-                new() { Name = "Calcite",           Category = MineCategory.Gems, QualifiedItemId = "(O)552" },
-                new() { Name = "Celestine",         Category = MineCategory.Gems, QualifiedItemId = "(O)571" },
-                new() { Name = "Dolomite",          Category = MineCategory.Gems, QualifiedItemId = "(O)570" },
-                new() { Name = "Esperite",          Category = MineCategory.Gems, QualifiedItemId = "(O)562" },
-                new() { Name = "Fluorapatite",      Category = MineCategory.Gems, QualifiedItemId = "(O)567" },
-                new() { Name = "Fluorite",          Category = MineCategory.Gems, QualifiedItemId = "(O)581" },
-                new() { Name = "Geminite",          Category = MineCategory.Gems, QualifiedItemId = "(O)556" },
-                new() { Name = "Ghost Crystal",     Category = MineCategory.Gems, QualifiedItemId = "(O)565" },
-                new() { Name = "Helvite",           Category = MineCategory.Gems, QualifiedItemId = "(O)575" },
-                new() { Name = "Jamborite",         Category = MineCategory.Gems, QualifiedItemId = "(O)560" },
-                new() { Name = "Jagoite",           Category = MineCategory.Gems, QualifiedItemId = "(O)564" },
-                new() { Name = "Kyanite",           Category = MineCategory.Gems, QualifiedItemId = "(O)580" },
-                new() { Name = "Lemon Stone",       Category = MineCategory.Gems, QualifiedItemId = "(O)579" },
-                new() { Name = "Lunarite",          Category = MineCategory.Gems, QualifiedItemId = "(O)558" },
-                new() { Name = "Malachite",         Category = MineCategory.Gems, QualifiedItemId = "(O)554" },
-                new() { Name = "Nekoite",           Category = MineCategory.Gems, QualifiedItemId = "(O)551" },
-                new() { Name = "Neptunite",         Category = MineCategory.Gems, QualifiedItemId = "(O)569" },
-                new() { Name = "Ocean Stone",       Category = MineCategory.Gems, QualifiedItemId = "(O)576" },
-                new() { Name = "Orpiment",          Category = MineCategory.Gems, QualifiedItemId = "(O)555" },
-                new() { Name = "Petrified Slime",   Category = MineCategory.Gems, QualifiedItemId = "(O)560" },
-                new() { Name = "Pyrite",            Category = MineCategory.Gems, QualifiedItemId = "(O)572" },
-                new() { Name = "Slate",             Category = MineCategory.Gems, QualifiedItemId = "(O)559" },
-                new() { Name = "Soapstone",         Category = MineCategory.Gems, QualifiedItemId = "(O)574" },
+                // Geode minerals (IDs verified from Stardew Valley Wiki)
+                new() { Name = "Aerinite",          Category = MineCategory.Gems, QualifiedItemId = "(O)541" },
+                new() { Name = "Alamite",           Category = MineCategory.Gems, QualifiedItemId = "(O)538" },
+                new() { Name = "Baryte",            Category = MineCategory.Gems, QualifiedItemId = "(O)540" },
+                new() { Name = "Basalt",            Category = MineCategory.Gems, QualifiedItemId = "(O)570" },
+                new() { Name = "Bixite",            Category = MineCategory.Gems, QualifiedItemId = "(O)539" },
+                new() { Name = "Calcite",           Category = MineCategory.Gems, QualifiedItemId = "(O)542" },
+                new() { Name = "Celestine",         Category = MineCategory.Gems, QualifiedItemId = "(O)566" },
+                new() { Name = "Dolomite",          Category = MineCategory.Gems, QualifiedItemId = "(O)543" },
+                new() { Name = "Esperite",          Category = MineCategory.Gems, QualifiedItemId = "(O)544" },
+                new() { Name = "Fairy Stone",       Category = MineCategory.Gems, QualifiedItemId = "(O)577" },
+                new() { Name = "Fire Opal",         Category = MineCategory.Gems, QualifiedItemId = "(O)565" },
+                new() { Name = "Fluorapatite",      Category = MineCategory.Gems, QualifiedItemId = "(O)545" },
+                new() { Name = "Geminite",          Category = MineCategory.Gems, QualifiedItemId = "(O)546" },
+                new() { Name = "Ghost Crystal",     Category = MineCategory.Gems, QualifiedItemId = "(O)561" },
+                new() { Name = "Granite",           Category = MineCategory.Gems, QualifiedItemId = "(O)569" },
+                new() { Name = "Helvite",           Category = MineCategory.Gems, QualifiedItemId = "(O)547" },
+                new() { Name = "Hematite",          Category = MineCategory.Gems, QualifiedItemId = "(O)573" },
+                new() { Name = "Jagoite",           Category = MineCategory.Gems, QualifiedItemId = "(O)549" },
+                new() { Name = "Jamborite",         Category = MineCategory.Gems, QualifiedItemId = "(O)548" },
+                new() { Name = "Jasper",            Category = MineCategory.Gems, QualifiedItemId = "(O)563" },
+                new() { Name = "Kyanite",           Category = MineCategory.Gems, QualifiedItemId = "(O)550" },
+                new() { Name = "Lemon Stone",       Category = MineCategory.Gems, QualifiedItemId = "(O)554" },
+                new() { Name = "Limestone",         Category = MineCategory.Gems, QualifiedItemId = "(O)571" },
+                new() { Name = "Lunarite",          Category = MineCategory.Gems, QualifiedItemId = "(O)551" },
+                new() { Name = "Malachite",         Category = MineCategory.Gems, QualifiedItemId = "(O)552" },
+                new() { Name = "Marble",            Category = MineCategory.Gems, QualifiedItemId = "(O)567" },
+                new() { Name = "Mudstone",          Category = MineCategory.Gems, QualifiedItemId = "(O)574" },
+                new() { Name = "Nekoite",           Category = MineCategory.Gems, QualifiedItemId = "(O)555" },
+                new() { Name = "Neptunite",         Category = MineCategory.Gems, QualifiedItemId = "(O)553" },
+                new() { Name = "Obsidian",          Category = MineCategory.Gems, QualifiedItemId = "(O)575" },
+                new() { Name = "Ocean Stone",       Category = MineCategory.Gems, QualifiedItemId = "(O)560" },
+                new() { Name = "Opal",              Category = MineCategory.Gems, QualifiedItemId = "(O)564" },
+                new() { Name = "Orpiment",          Category = MineCategory.Gems, QualifiedItemId = "(O)556" },
+                new() { Name = "Petrified Slime",   Category = MineCategory.Gems, QualifiedItemId = "(O)557" },
+                new() { Name = "Pyrite",            Category = MineCategory.Gems, QualifiedItemId = "(O)559" },
+                new() { Name = "Sandstone",         Category = MineCategory.Gems, QualifiedItemId = "(O)568" },
+                new() { Name = "Slate",             Category = MineCategory.Gems, QualifiedItemId = "(O)576" },
+                new() { Name = "Soapstone",         Category = MineCategory.Gems, QualifiedItemId = "(O)572" },
                 new() { Name = "Star Shards",       Category = MineCategory.Gems, QualifiedItemId = "(O)578" },
-                new() { Name = "Thunder Egg",       Category = MineCategory.Gems, QualifiedItemId = "(O)563" },
-                new() { Name = "Tigerseye",         Category = MineCategory.Gems, QualifiedItemId = "(O)566" },
-                new() { Name = "Void Shard",        Category = MineCategory.Gems, QualifiedItemId = "(O)337" },
+                new() { Name = "Thunder Egg",       Category = MineCategory.Gems, QualifiedItemId = "(O)558" },
+                new() { Name = "Tigerseye",         Category = MineCategory.Gems, QualifiedItemId = "(O)562" },
 
                 // ════════════════════════════════════════════════════════════════════
                 // CATEGORY 3 — MONSTERS
@@ -273,7 +303,7 @@ namespace CaveContentDisplay
                 new() { Name = "Purple Mushroom",   Category = MineCategory.Forageables, QualifiedItemId = "(O)422" },
                 new() { Name = "Morel",             Category = MineCategory.Forageables, QualifiedItemId = "(O)257" },
                 new() { Name = "Chanterelle",       Category = MineCategory.Forageables, QualifiedItemId = "(O)281" },
-                new() { Name = "Common Mushroom",   Category = MineCategory.Forageables, QualifiedItemId = "(O)281" },
+                new() { Name = "Common Mushroom",   Category = MineCategory.Forageables, QualifiedItemId = "(O)404" },
                 new() { Name = "Magma Cap",         Category = MineCategory.Forageables, QualifiedItemId = "(O)851" },
 
                 // Cave forageables
@@ -299,13 +329,14 @@ namespace CaveContentDisplay
                 new() { Name = "Warp Totem: Island",Category = MineCategory.Forageables, QualifiedItemId = "(O)886" },
 
                 // Rare drops
-                new() { Name = "Basilisk Paw",      Category = MineCategory.Forageables, QualifiedItemId = "(O)892" },
-                new() { Name = "Fairy Box",         Category = MineCategory.Forageables, QualifiedItemId = "(O)897" },
-                new() { Name = "Frog Egg",          Category = MineCategory.Forageables, QualifiedItemId = "(O)857" },
-                new() { Name = "Golden Spur",       Category = MineCategory.Forageables, QualifiedItemId = "(O)893" },
-                new() { Name = "Ice Rod",           Category = MineCategory.Forageables, QualifiedItemId = "(O)60"  },
-                new() { Name = "Magic Quiver",      Category = MineCategory.Forageables, QualifiedItemId = "(O)891" },
-                new() { Name = "Parrot Egg",        Category = MineCategory.Forageables, QualifiedItemId = "(O)872" },
+                // Trinkets — use (TR) qualifier; these are Trinket-type items, not Objects
+                new() { Name = "Basilisk Paw",      Category = MineCategory.Forageables, QualifiedItemId = "(TR)BasiliskPaw"  },
+                new() { Name = "Fairy Box",         Category = MineCategory.Forageables, QualifiedItemId = "(TR)FairyBox"     },
+                new() { Name = "Frog Egg",          Category = MineCategory.Forageables, QualifiedItemId = "(TR)FrogEgg"     },
+                new() { Name = "Golden Spur",       Category = MineCategory.Forageables, QualifiedItemId = "(TR)GoldenSpur"  },
+                new() { Name = "Ice Rod",           Category = MineCategory.Forageables, QualifiedItemId = "(TR)IceRod"      },
+                new() { Name = "Magic Quiver",      Category = MineCategory.Forageables, QualifiedItemId = "(TR)MagicQuiver" },
+                new() { Name = "Parrot Egg",        Category = MineCategory.Forageables, QualifiedItemId = "(TR)ParrotEgg"   },
                 new() { Name = "Small Glow Ring",   Category = MineCategory.Forageables, QualifiedItemId = "(O)516" },
                 new() { Name = "Small Magnet Ring", Category = MineCategory.Forageables, QualifiedItemId = "(O)518" },
                 new() { Name = "Glow Ring",         Category = MineCategory.Forageables, QualifiedItemId = "(O)517" },
@@ -323,7 +354,23 @@ namespace CaveContentDisplay
 
             AllItems = list.AsReadOnly();
 
-            // Build by-category lookup
+            // ── Auto-generate CanonicalKey for every entry ────────────────────
+            foreach (var item in list)
+            {
+                if (!string.IsNullOrEmpty(item.CanonicalKey))
+                    continue; // already set manually
+
+                if (item.IsResourceClump && item.ResourceClumpId.HasValue)
+                    item.CanonicalKey = CanonicalPrefix.Build(CanonicalPrefix.RC, item.ResourceClumpId.Value.ToString());
+                else if (item.Category == MineCategory.Monsters)
+                    item.CanonicalKey = CanonicalPrefix.Build(CanonicalPrefix.Monster, item.Name);
+                else if (item.Name is "Ladder" or "Shaft")
+                    item.CanonicalKey = CanonicalPrefix.Build(CanonicalPrefix.Special, item.Name);
+                else
+                    item.CanonicalKey = CanonicalPrefix.Build(CanonicalPrefix.Item, item.Name);
+            }
+
+            // ── Build lookup dictionaries ─────────────────────────────────────
             var byCategory = new Dictionary<string, IReadOnlyList<MineItemData>>();
             foreach (var cat in new[]
             {
@@ -335,10 +382,68 @@ namespace CaveContentDisplay
                 byCategory[cat] = list.Where(x => x.Category == cat).ToList().AsReadOnly();
             }
             ByCategory = byCategory;
+
+            // CanonicalKey → MineItemData (first wins if duplicates)
+            var byKey = new Dictionary<string, MineItemData>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in list)
+            {
+                byKey.TryAdd(item.CanonicalKey, item);
+            }
+            ByCanonicalKey = byKey;
+
+            // English Name → CanonicalKey (for migrating old configs)
+            var nameToKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in list)
+            {
+                nameToKey.TryAdd(item.Name, item.CanonicalKey);
+            }
+            EnglishNameToKey = nameToKey;
+
+            // Resource clump names for O(1) lookup (Issue 3.5)
+            _resourceClumpNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in list)
+            {
+                if (item.IsResourceClump)
+                    _resourceClumpNames.Add(item.Name);
+            }
         }
 
         /// <summary>
-        /// Returns the ResourceClump name for a given parentSheetIndex, or null if not known.
+        /// Resolves the localized display name for a master-list item at runtime.
+        /// Falls back to the English <see cref="MineItemData.Name"/> if lookup fails.
+        /// </summary>
+        public static string GetLocalizedDisplayName(MineItemData data)
+        {
+            // Monsters / ResourceClumps / specials without QID → use English name
+            if (string.IsNullOrEmpty(data.QualifiedItemId))
+                return data.Name;
+
+            try
+            {
+                var parsed = ItemRegistry.GetDataOrErrorItem(data.QualifiedItemId);
+                if (parsed != null && !parsed.IsErrorItem)
+                    return parsed.DisplayName;
+            }
+            catch { }
+
+            return data.Name;
+        }
+
+        /// <summary>
+        /// Resolves a localized display name from a canonical key at runtime.
+        /// </summary>
+        public static string GetLocalizedDisplayName(string canonicalKey)
+        {
+            if (ByCanonicalKey.TryGetValue(canonicalKey, out var data))
+                return GetLocalizedDisplayName(data);
+
+            // Unknown key — strip prefix and return as-is
+            int colon = canonicalKey.IndexOf(':');
+            return colon >= 0 ? canonicalKey[(colon + 1)..] : canonicalKey;
+        }
+
+        /// <summary>
+        /// Returns the ResourceClump English name for a given parentSheetIndex, or null if not known.
         /// </summary>
         public static string? GetResourceClumpName(int parentSheetIndex)
         {
@@ -354,11 +459,21 @@ namespace CaveContentDisplay
         }
 
         /// <summary>
+        /// Returns the canonical key for a ResourceClump by parentSheetIndex, or null.
+        /// </summary>
+        public static string? GetResourceClumpCanonicalKey(int parentSheetIndex)
+        {
+            string? name = GetResourceClumpName(parentSheetIndex);
+            return name != null ? CanonicalPrefix.Build(CanonicalPrefix.RC, parentSheetIndex.ToString()) : null;
+        }
+
+        /// <summary>
         /// Returns true if the given name belongs to a ResourceClump entry.
+        /// Uses pre-built HashSet for O(1) lookup (Issue 3.5).
         /// </summary>
         public static bool IsResourceClumpName(string name)
         {
-            return AllItems.Any(x => x.IsResourceClump && x.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase));
+            return _resourceClumpNames.Contains(name);
         }
     }
 }

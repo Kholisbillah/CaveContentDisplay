@@ -30,6 +30,9 @@
     "config.sortMode.name": "Sort Mode",
     "config.sortMode.desc": "Order in which items are listed in the HUD.",
 
+    "config.filterMode.name": "Filter Mode",
+    "config.filterMode.desc": "Whitelist = only checked items are shown. Blacklist = checked items are hidden.",
+
     "config.hudX.name": "HUD X Position",
     "config.hudX.desc": "Horizontal position of the HUD panel in pixels from the left edge.",
 
@@ -41,7 +44,7 @@
 
     // ── GMCM: Keys ────────────────────────────────────────────────────────────
     "config.filterMenuKey.name": "Open Filter Picker Key",
-    "config.filterMenuKey.desc": "Press this key in-game to open the Item Filter Picker. Default: R",
+    "config.filterMenuKey.desc": "Press this key in-game to open the Item Filter Picker. Default: F7",
 
     "config.toggleKey.name": "Toggle HUD Key",
     "config.toggleKey.desc": "Press this key to show or hide the Cave Contents HUD. Default: H"

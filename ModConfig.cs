@@ -19,6 +19,17 @@ namespace CaveContentDisplay
         Category
     }
 
+    /// <summary>
+    /// Determines how the FilteredItems list is interpreted.
+    /// </summary>
+    public enum FilterMode
+    {
+        /// <summary>Only checked items are shown in the HUD. Empty list = show all.</summary>
+        Whitelist,
+        /// <summary>Checked items are hidden from the HUD. Empty list = show all.</summary>
+        Blacklist,
+    }
+
     public class ModConfig
     {
         public bool ShowIcons { get; set; } = true;
@@ -29,8 +40,10 @@ namespace CaveContentDisplay
         public float GuiScale { get; set; } = 1.0f;
         public StardewModdingAPI.SButton ToggleKey { get; set; } = StardewModdingAPI.SButton.H;
         /// <summary>Key to open the filter picker menu.</summary>
-        public StardewModdingAPI.SButton FilterMenuKey { get; set; } = StardewModdingAPI.SButton.R;
-        /// <summary>Items to show in HUD. Empty = show all.</summary>
+        public StardewModdingAPI.SButton FilterMenuKey { get; set; } = StardewModdingAPI.SButton.F7;
+        /// <summary>How the filter list is interpreted: Whitelist (show checked) or Blacklist (hide checked).</summary>
+        public FilterMode FilterMode { get; set; } = FilterMode.Whitelist;
+        /// <summary>Canonical keys of items to filter. Interpretation depends on FilterMode.</summary>
         public List<string> FilteredItems { get; set; } = new();
     }
 }
